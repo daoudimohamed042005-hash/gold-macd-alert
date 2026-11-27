@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """Gold (15m) MACD cross alert -> Telegram.
 
-Same maths as the CM_MacD_Ult_MTF Pine script:
-  macd   = EMA(close, 12) - EMA(close, 26)
-  signal = SMA(macd, 9)          (simple moving average, as in the script)
-Buy  = MACD crosses above signal   (Pine: crossover)
-Sell = MACD crosses below signal   (Pine: crossunder)
-Free: Yahoo Finance chart data + Telegram Bot API, standard library only.
+macd   = EMA(close, 12) - EMA(close, 26)
+signal = SMA(macd, 9)
+Buy  = MACD crosses above signal, Sell = MACD crosses below signal.
 """
 import json
 import os
@@ -17,10 +14,10 @@ import urllib.request
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-SYMBOL = os.environ.get("SYMBOL", "GC=F")          # gold futures; XAUUSD=X is spot
+SYMBOL = os.environ.get("SYMBOL", "GC=F")
 INTERVAL_SEC = 15 * 60
 FAST, SLOW, SIGNAL = 12, 26, 9
-LOOKBACK_CANDLES = 12                                # recheck last N closed candles
+LOOKBACK_CANDLES = 12
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 LOCAL_TZ = ZoneInfo("Africa/Algiers")
 
@@ -39,7 +36,7 @@ def fetch_candles(symbol):
     closes = res["indicators"]["quote"][0]["close"]
     candles = [(t, c) for t, c in zip(stamps, closes) if c is not None]
     now = time.time()
-    return [(t, c) for t, c in candles if t + INTERVAL_SEC <= now]  # closed only
+    return [(t, c) for t, c in candles if t + INTERVAL_SEC <= now]
 
 
 def ema(values, n):
@@ -60,7 +57,6 @@ def compute(closes):
 
 
 def find_signals(candles, since_ts):
-    """Return [(ts, 'buy'|'sell', close)] for crosses on the last closed candles."""
     closes = [c for _, c in candles]
     if len(closes) < SLOW + SIGNAL + 5:
         raise RuntimeError("Not enough candles")
@@ -107,18 +103,18 @@ def save_state(ts):
 
 
 def main():
-    candles = fetch_candles(SYMBOL)
-      if os.environ.get("HEARTBEAT") == "true":
-        send_telegram(f"⏱ فحص تجريبي: {fmt_time(int(time.time()))} - آخر سعر {candles[-1][1]:.2f}")
-  if os.environ.get("SEND_TEST") == "true":
+    if os.environ.get("SEND_TEST") == "true":
         send_telegram("✅ اختبار: تنبيه MACD للذهب (15 دقيقة) يعمل.")
         print("Test message sent")
         return 0
 
     candles = fetch_candles(SYMBOL)
+
+    if os.environ.get("HEARTBEAT") == "true":
+        send_telegram(f"⏱ فحص تجريبي: {fmt_time(int(time.time()))} - آخر سعر {candles[-1][1]:.2f}")
+
     last_ts = load_state()
     if last_ts is None:
-        # First run: start from now, don't alert about old crosses.
         save_state(candles[-1][0])
         print("Initialised state; no alert on first run")
         return 0
