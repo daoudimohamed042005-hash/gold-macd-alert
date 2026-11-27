@@ -107,7 +107,10 @@ def save_state(ts):
 
 
 def main():
-    if os.environ.get("SEND_TEST") == "true":
+    candles = fetch_candles(SYMBOL)
+      if os.environ.get("HEARTBEAT") == "true":
+        send_telegram(f"⏱ فحص تجريبي: {fmt_time(int(time.time()))} - آخر سعر {candles[-1][1]:.2f}")
+  if os.environ.get("SEND_TEST") == "true":
         send_telegram("✅ اختبار: تنبيه MACD للذهب (15 دقيقة) يعمل.")
         print("Test message sent")
         return 0
