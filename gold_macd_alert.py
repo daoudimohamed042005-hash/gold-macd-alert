@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
-"""Gold (15m) MACD cross alert -> Telegram.
+"""Gold (15m) MACD cross alert -> Telegram + email.
 
 Same maths as the CM_MacD_Ult_MTF Pine script:
   macd   = EMA(close, 12) - EMA(close, 26)
   signal = SMA(macd, 9)          (simple moving average, as in the script)
 Buy  = MACD crosses above signal   (Pine: crossover)
 Sell = MACD crosses below signal   (Pine: crossunder)
-Free: Yahoo Finance chart data + Telegram Bot API, standard library only.
 """
 import json
 import os
+import smtplib
 import sys
 import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
 SYMBOL = os.environ.get("SYMBOL", "XAUUSD=X")      # spot gold (CFD); GC=F is futures
 INTERVAL_SEC = 15 * 60
 FAST, SLOW, SIGNAL = 12, 26, 9
-LOOKBACK_CANDLES = 12                               # recheck last N closed candles
+LOOKBACK_CANDLES = 3                                # recheck last N closed candles
+MAX_AGE_SEC = 20 * 60                               # alert only if the cross is newer than this
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 LOCAL_TZ = ZoneInfo("Africa/Algiers")
 
@@ -126,6 +128,8 @@ def find_signals(candles, since_ts):
         ts, close = candles[i]
         if ts <= since_ts:
             continue
+        if time.time() - (ts + INTERVAL_SEC) > MAX_AGE_SEC:
+            continue  # cross is too old
         if macd[i] > signal[i] and macd[i - 1] <= signal[i - 1]:
             found.append((ts, "buy", close))
         elif macd[i] < signal[i] and macd[i - 1] >= signal[i - 1]:
@@ -141,6 +145,45 @@ def send_telegram(text):
     with urllib.request.urlopen(req, timeout=30) as r:
         if r.status != 200:
             raise RuntimeError(f"Telegram error {r.status}")
+
+
+def send_email(subject, text):
+    """Optional email via SMTP (default Gmail). Needs EMAIL_USER + EMAIL_PASSWORD secrets."""
+    user = os.environ.get("EMAIL_USER", "").strip()
+    password = os.environ.get("EMAIL_PASSWORD", "").strip()
+    if not user or not password:
+        return False
+    to = os.environ.get("EMAIL_TO", "").strip() or user
+    host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+    port = int(os.environ.get("SMTP_PORT", "465"))
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = user
+    msg["To"] = to
+    msg.set_content(text)
+    with smtplib.SMTP_SSL(host, port, timeout=30) as smtp:
+        smtp.login(user, password)
+        smtp.send_message(msg)
+    return True
+
+
+def notify(subject, text):
+    """Send to Telegram and email; one failing does not block the other."""
+    errors, sent = [], 0
+    try:
+        send_telegram(text)
+        sent += 1
+    except Exception as e:
+        errors.append(f"Telegram: {e}")
+    try:
+        if send_email(subject, text):
+            sent += 1
+    except Exception as e:
+        errors.append(f"Email: {e}")
+    if errors:
+        print("notify errors:", " | ".join(errors))
+    if sent == 0:
+        raise RuntimeError(" | ".join(errors) or "nothing sent")
 
 
 def fmt_time(ts):
@@ -162,7 +205,7 @@ def save_state(ts):
 
 def run():
     if os.environ.get("SEND_TEST") == "true":
-        send_telegram("✅ اختبار: تنبيه MACD للذهب (15 دقيقة) يعمل.")
+        notify("اختبار تنبيه الذهب", "✅ اختبار: تنبيه MACD للذهب (15 دقيقة) يعمل.")
         print("Test message sent")
         return 0
 
@@ -183,7 +226,8 @@ def run():
     signals = find_signals(candles, last_ts)
     for ts, kind, close in signals:
         icon, label = ("🟢", "تقاطع شراء") if kind == "buy" else ("🔴", "تقاطع بيع")
-        send_telegram(
+        notify(
+            f"{icon} {label} - الذهب 15 دقيقة",
             f"{icon} {label} (MACD) — الذهب 15 دقيقة\n"
             f"السعر: {close:.2f}\n"
             f"إغلاق الشمعة: {fmt_time(ts)} (توقيت الجزائر)\n"
