@@ -53,14 +53,47 @@ def fetch_candles(symbol):
     raise last_err
 
 
+def fetch_twelvedata(api_key):
+    """Spot gold XAU/USD 15-minute candles from Twelve Data (free API key)."""
+    url = (
+        "https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=15min"
+        "&outputsize=300&order=ASC&timezone=UTC&apikey=" + urllib.parse.quote(api_key)
+    )
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        data = json.load(r)
+    if data.get("status") == "error" or "values" not in data:
+        raise RuntimeError(f"TwelveData: {data.get('message', data)}")
+    candles = []
+    for v in data["values"]:
+        dt = datetime.strptime(v["datetime"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        candles.append((int(dt.timestamp()), float(v["close"])))
+    candles.sort()
+    now = time.time()
+    candles = [(t, c) for t, c in candles if t + INTERVAL_SEC <= now]
+    if len(candles) < SLOW + SIGNAL + 5:
+        raise RuntimeError(f"TwelveData: not enough candles ({len(candles)})")
+    return candles
+
+
 def get_candles():
-    tried = []
-    for sym in dict.fromkeys([SYMBOL, "GC=F"]):
+    """Spot gold (XAU/USD). Futures (GC=F) only if ALLOW_FUTURES=true."""
+    errors = []
+    api_key = os.environ.get("TWELVEDATA_API_KEY", "").strip()
+    if api_key:
+        try:
+            return "XAU/USD (TwelveData)", fetch_twelvedata(api_key)
+        except Exception as e:
+            errors.append(str(e))
+    symbols = [SYMBOL]
+    if os.environ.get("ALLOW_FUTURES") == "true":
+        symbols.append("GC=F")
+    for sym in dict.fromkeys(symbols):
         try:
             return sym, fetch_candles(sym)
         except Exception as e:
-            tried.append(f"{sym}: {e}")
-    raise RuntimeError("; ".join(tried))
+            errors.append(f"{sym}: {e}")
+    raise RuntimeError(" | ".join(errors))
 
 
 def ema(values, n):
