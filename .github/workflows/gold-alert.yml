@@ -30,15 +30,16 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TEST: ${{ inputs.test }}
           HEARTBEAT: "true"
-          SYMBOL: "XAUUSD=X"
         run: python3 gold_macd_alert.py
 
       - name: Save state
+        if: always()
         run: |
           if [ -n "$(git status --porcelain state.json)" ]; then
             git config user.name "gold-alert-bot"
             git config user.email "gold-alert-bot@users.noreply.github.com"
             git add state.json
             git commit -m "update state"
-            git push
+            git pull --rebase origin main || true
+            git push || true
           fi
