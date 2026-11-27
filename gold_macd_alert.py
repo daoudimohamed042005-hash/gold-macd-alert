@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 SYMBOL = os.environ.get("SYMBOL", "GC=F")          # gold futures; XAUUSD=X is spot
 INTERVAL_SEC = 15 * 60
 FAST, SLOW, SIGNAL = 12, 26, 9
-LOOKBACK_CANDLES = 3                                # recheck last N closed candles
+LOOKBACK_CANDLES = 12                                # recheck last N closed candles
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 LOCAL_TZ = ZoneInfo("Africa/Algiers")
 
