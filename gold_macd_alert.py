@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Gold (15m) MACD cross alert -> Telegram.
 
-macd   = EMA(close, 12) - EMA(close, 26)
-signal = SMA(macd, 9)
-Buy  = MACD crosses above signal, Sell = MACD crosses below signal.
+Same maths as the CM_MacD_Ult_MTF Pine script:
+  macd   = EMA(close, 12) - EMA(close, 26)
+  signal = SMA(macd, 9)          (simple moving average, as in the script)
+Buy  = MACD crosses above signal   (Pine: crossover)
+Sell = MACD crosses below signal   (Pine: crossunder)
+Free: Yahoo Finance chart data + Telegram Bot API, standard library only.
 """
 import json
 import os
@@ -14,29 +17,50 @@ import urllib.request
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-SYMBOL = os.environ.get("SYMBOL", "GC=F")
+SYMBOL = os.environ.get("SYMBOL", "XAUUSD=X")      # spot gold (CFD); GC=F is futures
 INTERVAL_SEC = 15 * 60
 FAST, SLOW, SIGNAL = 12, 26, 9
-LOOKBACK_CANDLES = 12
+LOOKBACK_CANDLES = 12                               # recheck last N closed candles
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 LOCAL_TZ = ZoneInfo("Africa/Algiers")
 
 
 def fetch_candles(symbol):
-    url = (
-        "https://query1.finance.yahoo.com/v8/finance/chart/"
-        + urllib.parse.quote(symbol)
-        + "?interval=15m&range=10d"
-    )
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.load(r)
-    res = data["chart"]["result"][0]
-    stamps = res["timestamp"]
-    closes = res["indicators"]["quote"][0]["close"]
-    candles = [(t, c) for t, c in zip(stamps, closes) if c is not None]
-    now = time.time()
-    return [(t, c) for t, c in candles if t + INTERVAL_SEC <= now]
+    last_err = None
+    for host in ("query1", "query2", "query1"):
+        url = (
+            f"https://{host}.finance.yahoo.com/v8/finance/chart/"
+            + urllib.parse.quote(symbol)
+            + "?interval=15m&range=10d"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = json.load(r)
+            res = data["chart"]["result"][0]
+            stamps = res["timestamp"]
+            closes = res["indicators"]["quote"][0]["close"]
+            candles = [(t, c) for t, c in zip(stamps, closes) if c is not None]
+            now = time.time()
+            candles = [(t, c) for t, c in candles if t + INTERVAL_SEC <= now]
+            if len(candles) < SLOW + SIGNAL + 5:
+                raise RuntimeError(f"Not enough candles for {symbol}: {len(candles)}")
+            return candles
+        except Exception as e:  # try next host
+            last_err = e
+            print(f"fetch failed ({host}, {symbol}): {e!r}")
+            time.sleep(2)
+    raise last_err
+
+
+def get_candles():
+    tried = []
+    for sym in dict.fromkeys([SYMBOL, "GC=F"]):
+        try:
+            return sym, fetch_candles(sym)
+        except Exception as e:
+            tried.append(f"{sym}: {e}")
+    raise RuntimeError("; ".join(tried))
 
 
 def ema(values, n):
@@ -57,6 +81,7 @@ def compute(closes):
 
 
 def find_signals(candles, since_ts):
+    """Return [(ts, 'buy'|'sell', close)] for crosses on the last closed candles."""
     closes = [c for _, c in candles]
     if len(closes) < SLOW + SIGNAL + 5:
         raise RuntimeError("Not enough candles")
@@ -102,16 +127,19 @@ def save_state(ts):
         json.dump({"last_ts": ts}, f)
 
 
-def main():
+def run():
     if os.environ.get("SEND_TEST") == "true":
         send_telegram("✅ اختبار: تنبيه MACD للذهب (15 دقيقة) يعمل.")
         print("Test message sent")
         return 0
 
-    candles = fetch_candles(SYMBOL)
+    symbol, candles = get_candles()
 
     if os.environ.get("HEARTBEAT") == "true":
-        send_telegram(f"⏱ فحص تجريبي: {fmt_time(int(time.time()))} - آخر سعر {candles[-1][1]:.2f}")
+        send_telegram(
+            f"⏱ فحص تجريبي: {fmt_time(int(time.time()))}\n"
+            f"آخر سعر: {candles[-1][1]:.2f} ({symbol})"
+        )
 
     last_ts = load_state()
     if last_ts is None:
@@ -126,11 +154,27 @@ def main():
             f"{icon} {label} (MACD) — الذهب 15 دقيقة\n"
             f"السعر: {close:.2f}\n"
             f"إغلاق الشمعة: {fmt_time(ts)} (توقيت الجزائر)\n"
-            f"المصدر: {SYMBOL}"
+            f"المصدر: {symbol}"
         )
         print(f"Sent {kind} at {ts}")
-    save_state(max([candles[-1][0]] + [s[0] for s in signals]))
+    if signals:
+        save_state(max(s[0] for s in signals))
+    print(f"Done. symbol={symbol}, signals={len(signals)}")
     return 0
+
+
+def main():
+    try:
+        return run()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        if os.environ.get("HEARTBEAT") == "true":
+            try:
+                send_telegram(f"⚠️ خطأ في السكربت: {str(e)[:300]}")
+            except Exception:
+                pass
+        return 1
 
 
 if __name__ == "__main__":
