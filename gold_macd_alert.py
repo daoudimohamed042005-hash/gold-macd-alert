@@ -205,7 +205,7 @@ def save_state(ts):
 
 def run():
     if os.environ.get("SEND_TEST") == "true":
-        notify("اختبار تنبيه الذهب", "✅ اختبار: تنبيه MACD للذهب (15 دقيقة) يعمل.")
+        notify("مريقل.")
         print("Test message sent")
         return 0
 
