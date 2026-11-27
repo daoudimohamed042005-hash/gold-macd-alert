@@ -30,6 +30,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SEND_TEST: ${{ inputs.test }}
           HEARTBEAT: "true"
+          SYMBOL: "XAUUSD=X"
         run: python3 gold_macd_alert.py
 
       - name: Save state
